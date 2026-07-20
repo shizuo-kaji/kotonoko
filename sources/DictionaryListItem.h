@@ -43,5 +43,6 @@
 -(NSArray*) search:(NSString*)word method:(ESearchMethod)method max:(NSInteger)maxHits paramator:(NSDictionary*)paramator;
 -(BOOL) hasSearchMethod:(ESearchMethod) method;
 -(NSArray*) multiSearchTitles;
+-(NSUInteger) ebookNumber;
 
 @end;

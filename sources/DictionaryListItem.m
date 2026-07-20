@@ -22,7 +22,10 @@
     if(self){
         _paramators = [[NSMutableDictionary alloc] init];
         _children = [[NSMutableArray alloc] init];
-        [self setValue:[path lastPathComponent] forKey:@"title"];
+        NSString* title = [path lastPathComponent];
+        if (!title || [title length] == 0) title = @"Folder";
+        [self setValue:title forKey:@"title"];
+        [self setValue:title forKey:@"id"];
         [self setValue:[[[NSFileManager defaultManager] componentsToDisplayForPath:path] 
                                                         componentsJoinedByString:@":"]
                 forKey:@"displayPath"];
@@ -154,19 +157,38 @@
     if(self){
         _paramators = [[NSMutableDictionary alloc] init];
         _children = [[NSMutableArray alloc] init];
-        [self setValue:[NSString stringWithString:[book stringSubbookTitle]] forKey:@"title"];
-        NSString* directoryName = [book directoryName];
-        NSString* fullpath = [path stringByAppendingPathComponent:directoryName];
+        NSString* subbookTitle = [book stringSubbookTitle];
+        if (!subbookTitle || [subbookTitle length] == 0) {
+            subbookTitle = [path lastPathComponent];
+        }
+        if (!subbookTitle || [subbookTitle length] == 0) {
+            subbookTitle = @"Dictionary";
+        }
+        [self setValue:subbookTitle forKey:@"title"];
+        
+        if (!dictionaryId || [dictionaryId length] == 0) {
+            dictionaryId = [book directoryName];
+        }
+        if (!dictionaryId || [dictionaryId length] == 0) {
+            dictionaryId = [path lastPathComponent];
+        }
+        if (!dictionaryId || [dictionaryId length] == 0) {
+            dictionaryId = @"dictionary";
+        }
         [self setValue:dictionaryId forKey:@"id"];
+        
+        NSString* directoryName = [book directoryName];
+        if (!directoryName) directoryName = @"";
+        NSString* fullpath = path ? [path stringByAppendingPathComponent:directoryName] : directoryName;
 	
-        [self setValue:[[[NSFileManager defaultManager] componentsToDisplayForPath:fullpath] 
-                        componentsJoinedByString:@":"]
+        NSArray* pathComponents = [[NSFileManager defaultManager] componentsToDisplayForPath:fullpath];
+        [self setValue:pathComponents ? [pathComponents componentsJoinedByString:@":"] : fullpath
                 forKey:@"displayPath"];
         [self setValue:fullpath forKey:@"path"];
 	
-        NSMutableDictionary* param = [PreferenceModal dictioanryPreferenceForId:directoryName];
+        NSMutableDictionary* param = [PreferenceModal dictioanryPreferenceForId:dictionaryId];
         NSString* tagName = [param valueForKey:@"tagName"];
-        if(tagName){ [_paramators setValue:[NSString stringWithString:tagName] forKey:@"tagName"]; };
+        if(tagName && [tagName length] > 0){ [_paramators setValue:[NSString stringWithString:tagName] forKey:@"tagName"]; };
 	
         [self setValue:book forKey:@"ebook"];
 	
@@ -191,6 +213,13 @@
 									identify:(NSString*) dictionaryId
 {
 	return [[EBDictionary alloc] initWithEBook:book path:path identify:dictionaryId];
+}
+
+
+-(NSUInteger) ebookNumber
+{
+	EBook* ebook = [self valueForKey:@"ebook"];
+	return [ebook ebookNumber];
 }
 
 

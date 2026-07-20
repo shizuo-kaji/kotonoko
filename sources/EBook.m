@@ -128,15 +128,20 @@ static NSNumber *yes, *no;
     const char* path = [[NSFileManager defaultManager] fileSystemRepresentationWithPath:inPath];
 
     if(path == NULL){
+        NSLog(@"[EBook bind:] path is NULL for %@", inPath);
 		return NO;
     }
-    if(eb_bind(&_book, path) != EB_SUCCESS){
+    EB_Error_Code err = eb_bind(&_book, path);
+    if(err != EB_SUCCESS){
+        NSLog(@"[EBook bind:] eb_bind failed with error %d (%s) for path: %s", err, eb_error_message(err), path);
 		return NO;
     }
-    if(eb_subbook_list(&_book, _subbook, &_subbookNum) != EB_SUCCESS){
+    err = eb_subbook_list(&_book, _subbook, &_subbookNum);
+    if(err != EB_SUCCESS){
+        NSLog(@"[EBook bind:] eb_subbook_list failed with error %d (%s) for path: %s", err, eb_error_message(err), path);
 		return NO;
     }
-    
+    NSLog(@"[EBook bind:] SUCCESS for path: %s, subbookNum: %d", path, _subbookNum);
     return YES;
 }
 
@@ -203,20 +208,27 @@ static NSNumber *yes, *no;
     static ESearchMethod methods[] = { kSearchMethodWord, kSearchMethodEndWord, kSearchMethodKeyword,
 								kSearchMethodMenu, kSearchMethodMulti };
 	
+    if(inIndex < 0 || inIndex >= _subbookNum || inIndex >= EB_MAX_SUBBOOKS){
+        return NO;
+    }
     if((err = eb_set_subbook(&_book, _subbook[inIndex])) != EB_SUCCESS){
-		NSLog(@"eb_set_subbook:%s", eb_error_message(err));
+		NSLog(@"eb_set_subbook failed: %s", eb_error_message(err));
 		return NO;
     }
 	
 	ESearchMethod defaultMethod = kSearchMethodNone;
 	int i;
-	for(i=0; i<sizeof(methods); i++){
+	for(i=0; i < (sizeof(methods)/sizeof(ESearchMethod)); i++){
 		if([self haveSearchMethod:methods[i]]){
 			defaultMethod = methods[i];
 			break;
 		}
 	}
-    if (defaultMethod == kSearchMethodNone) return NO;
+    NSLog(@"[selectSubbook:%d] defaultMethod=%d, title=%@", inIndex, (int)defaultMethod, [self stringSubbookTitle]);
+    if (defaultMethod == kSearchMethodNone) {
+        NSLog(@"[selectSubbook:%d] FAILED: no search methods supported", inIndex);
+        return NO;
+    }
 	
     _activeSubbook = inIndex;
     if(eb_have_multi_search(&_book)){
@@ -243,13 +255,25 @@ static NSNumber *yes, *no;
     NSUInteger length;
     NSData* tmp;
     
-    if(eb_subbook_title2(&_book, _subbook[_activeSubbook], title) == EB_SUCCESS){
+    if(_activeSubbook >= 0 && _activeSubbook < _subbookNum && eb_subbook_title2(&_book, _subbook[_activeSubbook], title) == EB_SUCCESS){
 		length = strlen(title);
-		tmp = [NSData dataWithBytes:title length:length];
-		return [[NSString alloc] initWithData:tmp encoding:NSJapaneseEUCStringEncoding];
-    }else{
-		return NULL;
+		if (length > 0) {
+			tmp = [NSData dataWithBytes:title length:length];
+			NSString* str = [[NSString alloc] initWithData:tmp encoding:NSJapaneseEUCStringEncoding];
+			if (!str) {
+				NSStringEncoding eucEncoding = CFStringConvertEncodingToNSStringEncoding(kCFStringEncodingEUC_JP);
+				str = [[NSString alloc] initWithData:tmp encoding:eucEncoding];
+			}
+			if (!str) {
+				str = [[NSString alloc] initWithData:tmp encoding:NSShiftJISStringEncoding];
+			}
+			if (!str) {
+				str = [NSString stringWithCString:title encoding:NSASCIIStringEncoding];
+			}
+			if (str && [str length] > 0) return str;
+		}
     }
+    return @"";
 }
 
 
@@ -289,8 +313,11 @@ static NSNumber *yes, *no;
         }
         length = strlen(title);
         tmp = [NSData dataWithBytes:title length:length];
-        [array addObject:
-            [[NSString alloc] initWithData:tmp encoding:NSJapaneseEUCStringEncoding]];
+        NSString* titleStr = [[NSString alloc] initWithData:tmp encoding:NSJapaneseEUCStringEncoding];
+        if (!titleStr) {
+            titleStr = [[NSString alloc] initWithData:tmp encoding:NSShiftJISStringEncoding];
+        }
+        [array addObject:titleStr ? titleStr : @""];
     }
     return array;
 }
@@ -324,8 +351,11 @@ static NSNumber *yes, *no;
 		if (eb_multi_entry_label(&_book, _multiCode[inIndex], code[i], label) == EB_SUCCESS) {
 			length = strlen(label);
 			tmp = [NSData dataWithBytes:label length:length];
-			[array addObject:
-				[[NSString alloc] initWithData:tmp encoding:NSJapaneseEUCStringEncoding]];
+			NSString* entryStr = [[NSString alloc] initWithData:tmp encoding:NSJapaneseEUCStringEncoding];
+			if (!entryStr) {
+				entryStr = [[NSString alloc] initWithData:tmp encoding:NSShiftJISStringEncoding];
+			}
+			[array addObject:entryStr ? entryStr : @""];
 		}
     }
     
@@ -589,10 +619,11 @@ static NSNumber *yes, *no;
 {
     char title[EB_MAX_DIRECTORY_NAME_LENGTH + 1];
 
-    if(eb_subbook_directory2(&_book, _subbook[_activeSubbook], title) == EB_SUCCESS){
-    	return [NSString stringWithCString:title encoding:NSASCIIStringEncoding];
+    if(_activeSubbook >= 0 && _activeSubbook < _subbookNum && eb_subbook_directory2(&_book, _subbook[_activeSubbook], title) == EB_SUCCESS){
+    	NSString* dir = [NSString stringWithCString:title encoding:NSASCIIStringEncoding];
+    	return dir ? dir : @"";
     }
-    return NULL;
+    return @"";
 }
 
 #pragma mark menu
@@ -638,13 +669,43 @@ static NSNumber *yes, *no;
 }
 
 
-//-- strigHeading
+//-- stringHeading
 // heading stringを取得する
 - (NSAttributedString*) stringHeading:(EB_Position*) inPosition
 							paramator:(NSDictionary*) paramator
 {
+    return [self readHeadingAt:inPosition paramator:paramator];
+}
+
+
+- (NSString*) stringFromBuffer:(const char*)buffer length:(ssize_t)length
+{
+    if (!buffer || length <= 0) return nil;
+    EB_Character_Code code = EB_CHARCODE_INVALID;
+    eb_character_code(&_book, &code);
+    NSStringEncoding encoding = NSJapaneseEUCStringEncoding;
+    if (code == EB_CHARCODE_ISO8859_1) {
+        encoding = NSISOLatin1StringEncoding;
+    }
+    
+    NSString* string = [[NSString alloc] initWithData:[NSData dataWithBytes:buffer length:length] encoding:encoding];
+    if (!string) {
+        string = [[NSString alloc] initWithData:[NSData dataWithBytes:buffer length:length] encoding:NSASCIIStringEncoding];
+    }
+    if (!string) {
+        string = [[NSString alloc] initWithData:[NSData dataWithBytes:buffer length:length] encoding:NSUTF8StringEncoding];
+    }
+    return string;
+}
+
+
+//-- readHeadingAt:paramator:
+// 見出しを読み取る
+- (NSAttributedString*) readHeadingAt:(EB_Position*) inPosition
+							paramator:(NSDictionary*) paramator
+{
 	static char buffer[64];
-    ssize_t length;
+    ssize_t length = 0;
     
     buffer[sizeof(buffer) - 1] = '\0';
     EBookContainer* container = [[EBookContainer alloc] initWithEBook:self];
@@ -652,7 +713,10 @@ static NSNumber *yes, *no;
 	[container setAttribute:[paramator objectForKey:EBTextAttributes]];
 
     eb_seek_text(&_book, inPosition);
-    eb_read_heading(&_book, &_appendix, &_headingHookset, (__bridge void *)(container), sizeof(buffer) - 1, buffer, &length);
+    if (eb_read_heading(&_book, &_appendix, &_headingHookset, (__bridge void *)(container), sizeof(buffer) - 1, buffer, &length) == EB_SUCCESS && length > 0) {
+        NSString *str = [self stringFromBuffer:buffer length:length];
+        if (str) [container appendString:str];
+    }
     return [container attributedString];
 }
 
@@ -667,7 +731,10 @@ static NSNumber *yes, *no;
 	position.page = (int)location.page;
     position.offset = (int)location.offset;
 	
-	eb_seek_text(&_book, &position);
+	EB_Error_Code seek_err = eb_seek_text(&_book, &position);
+    if (seek_err != EB_SUCCESS) {
+        NSLog(@"[contentAt] eb_seek_text failed err=%d (%s)", seek_err, eb_error_string(seek_err));
+    }
     NSAttributedString* string = [self readTextWithParamator:param]; 
 	return string;
 }
@@ -685,10 +752,14 @@ static NSNumber *yes, *no;
     EBookContainer* container = [[EBookContainer alloc] initWithEBook:self];
 	
 	char buffer[1024];
-	ssize_t length;
+	ssize_t length = 0;
 	EB_Error_Code err;
 	do {
 		err = eb_read_text(&_book, &_appendix, &_htmlHookset, (__bridge void *)(container), sizeof(buffer) - 1, buffer, &length);
+        if (err == EB_SUCCESS && length > 0) {
+            NSString *str = [self stringFromBuffer:buffer length:length];
+            if (str) [container appendString:str];
+        }
 	} while (err == EB_SUCCESS && length > 0);
 	
 	return [container string];
@@ -737,14 +808,12 @@ static NSNumber *yes, *no;
 
 
 //-- hasSerialContents
-// 続きのコンテンツがあるかどうかのチェック
+// つづきのコンテンツがあるかどうかのチェック
 -(BOOL) hasSerialContents:(EBLocation*) location
 {
-	EB_Position position;
-	
-	EB_Error_Code err = eb_tell_text(&_book, &position);
-	if(_hasSerialContents && err == EB_SUCCESS){
-		if(eb_seek_text(&_book, &position) == EB_SUCCESS){
+	if(_hasSerialContents){
+		EB_Position position;
+		if(eb_tell_text(&_book, &position) == EB_SUCCESS){
 			if(location){
 				location->page = position.page;
 				location->offset = position.offset;
@@ -756,6 +825,7 @@ static NSNumber *yes, *no;
 }
 
 
+#pragma mark Read Text
 //-- readTextWithCode
 // テキストを読み込む
 - (NSAttributedString*) readTextWithParamator:(NSDictionary*) paramator
@@ -772,10 +842,14 @@ static NSNumber *yes, *no;
 	NSInteger i = 0;
 	do {
 		char buffer[1024];
-		ssize_t length;
+		ssize_t length = 0;
 		EB_Error_Code err;
 		do {
 			err = eb_read_text(&_book, &_appendix, &_textHookset, (__bridge void *)(container), sizeof(buffer) - 1, buffer, &length);
+            if (err == EB_SUCCESS && length > 0) {
+                NSString *str = [self stringFromBuffer:buffer length:length];
+                if (str) [container appendString:str];
+            }
 		} while (err == EB_SUCCESS && length > 0);
 		// 追加のテキストがあるかどうかの確認
 		err = eb_forward_text(&_book, &_appendix);

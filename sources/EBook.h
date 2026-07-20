@@ -113,6 +113,7 @@ extern NSString *const EBTagAttributes;
 -(NSString*) htmlContentAt:(EBLocation) location;
 -(BOOL) forwardContent;
 -(NSAttributedString*) readTextWithParamator:(NSDictionary*) paramator;
+-(NSString*) stringFromBuffer:(const char*)buffer length:(ssize_t)length;
 
 -(NSString*) propertyPath;
 -(NSString*) oldPropertyPath;

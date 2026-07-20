@@ -68,10 +68,18 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 // 辞書を追加
 -(void) addDictionary:(id <DictionaryProtocol>) item
 {
-	NSIndexSet *indexset = [NSIndexSet indexSetWithIndex:[_dictionaries count]];
-	[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"dictionaries"];
-	[_dictionaries addObject:item];
-	[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"dictionaries"];	
+    if (!item) return;
+    if (![_dictionaries containsObject:item]) {
+        NSIndexSet *indexset = [NSIndexSet indexSetWithIndex:[_dictionaries count]];
+        [self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"dictionaries"];
+        [_dictionaries addObject:item];
+        [self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"dictionaries"];
+        id obj = item;
+        NSLog(@"[addDictionary] ADDED item id=%@, title=%@, path=%@. Total count=%lu", [obj valueForKey:@"id"], [obj valueForKey:@"title"], [obj valueForKey:@"path"], (unsigned long)[_dictionaries count]);
+    } else {
+        id obj = item;
+        NSLog(@"[addDictionary] SKIPPED (already in _dictionaries) item id=%@", [obj valueForKey:@"id"]);
+    }
 }
 
 
@@ -79,10 +87,13 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 // 辞書を削除
 -(void) deleteDictionary:(id <DictionaryProtocol>) item
 {
-	NSIndexSet *indexset = [NSIndexSet indexSetWithIndex:[_dictionaries count]];
-	[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"dictionaries"];
-	[_dictionaries removeObject:item];
-	[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"dictionaries"];	
+	NSUInteger index = [_dictionaries indexOfObject:item];
+	if (index != NSNotFound) {
+		NSIndexSet *indexset = [NSIndexSet indexSetWithIndex:index];
+		[self willChange:NSKeyValueChangeRemoval valuesAtIndexes:indexset forKey:@"dictionaries"];
+		[_dictionaries removeObjectAtIndex:index];
+		[self didChange:NSKeyValueChangeRemoval valuesAtIndexes:indexset forKey:@"dictionaries"];	
+	}
 }
 
 
@@ -91,9 +102,9 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 -(void) deleteDictionaryAtIndex:(NSIndexSet*) indices
 {
 	if(indices){
-		[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indices forKey:@"dictionaries"];
+		[self willChange:NSKeyValueChangeRemoval valuesAtIndexes:indices forKey:@"dictionaries"];
 		[_dictionaries removeObjectsAtIndexes:indices];
-		[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indices forKey:@"dictionaries"];	
+		[self didChange:NSKeyValueChangeRemoval valuesAtIndexes:indices forKey:@"dictionaries"];	
 	}
 }
 
@@ -118,10 +129,13 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 -(EBook*) ebookForEBookNumber:(NSUInteger) number
 {
 	for(id item in _dictionaries){
-		if([item respondsToSelector:@selector(valueForKey:)]){
-			EBook* eb = [item valueForKey:@"ebook"];
-			if(eb && [eb ebookNumber] == number){
-				return eb;
+		EBook* eb = [item valueForKey:@"ebook"];
+		if (eb && [eb respondsToSelector:@selector(ebookNumber)] && [eb ebookNumber] == number) {
+			return eb;
+		}
+		if([item respondsToSelector:@selector(ebookNumber)]){
+			if([item ebookNumber] == number){
+				return [item valueForKey:@"ebook"];
 			}
 		}
 	}
@@ -130,11 +144,13 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 
 
 
-//-- uniqueDictionaryId
-// 唯一の辞書IDを作成する
+//-- uniqueDictionaryIdFromPath:directory:
+// パスからユニークな辞書IDを生成する
 -(NSString*) uniqueDictionaryIdFromPath:(NSString*) path
 							  directory:(NSString*) directoryName
 {
+    if (!path) path = @"";
+    if (!directoryName) directoryName = @"";
 	NSString* fullpath = [path stringByAppendingPathComponent:directoryName];
 	NSString* identifier = [PreferenceModal dictionaryIdForFullPath:fullpath];
 	
@@ -144,7 +160,7 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 	id item;
 	while((item = [self dictionaryForIdentity:identifier]) != nil){
 		if([fullpath isEqualToString:[item valueForKey:@"path"]]){
-			return nil;
+			return [item valueForKey:@"id"] ? [item valueForKey:@"id"] : identifier;
 		}
 		identifier = [NSString stringWithFormat:@"%@.%d", directoryName, counter++];
 	}
@@ -202,19 +218,40 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 }
 
 
++(BOOL) isEPWINGDirectory:(NSString*)path
+{
+    if (!path || [path length] == 0) return NO;
+    BOOL isDir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath:path isDirectory:&isDir] || !isDir) return NO;
+    
+    NSArray* contents = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path error:nil];
+    for (NSString* file in contents) {
+        NSString* lower = [file lowercaseString];
+        if ([lower isEqualToString:@"catalog"] || [lower isEqualToString:@"catalogs"] ||
+            [lower hasPrefix:@"catalog."] || [lower hasPrefix:@"catalogs."]) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
+
 //-- appendDirectory
 // 辞書パスの追加
 -(void) appendDirectory:(NSString*) path
 {
+    if (!path || [path length] == 0) return;
     NSURL* bookmark = [PreferenceModal securityBookmarkForPath:path];
     
     if (bookmark) [bookmark startAccessingSecurityScopedResource];
-	NSIndexSet *indexset = [NSIndexSet indexSetWithIndex:[_root count]];
-	[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"root"];
 	DictionaryListItem* item = [DictionaryListItem dictionaryListItemWithPath:path];
 	[self expandDirectory:item recursion:YES bookmark:bookmark];
-	[_root addObject:item];
-	[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"root"];
+	if ([[item children] count] > 0 || [[item valueForKey:@"type"] isEqualToString:@"book"]) {
+		NSIndexSet *indexset = [NSIndexSet indexSetWithIndex:[_root count]];
+		[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"root"];
+		[_root addObject:item];
+		[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indexset forKey:@"root"];
+	}
     if (bookmark) [bookmark stopAccessingSecurityScopedResource];
 }
 
@@ -227,40 +264,62 @@ DictionaryManager* sSharedDictionaryManager = NULL;
                bookmark :(NSURL*) bookmark
 {
 	NSString* path = [parent valueForKey:@"path"];
-	EBook* book = [[EBook alloc] init];
+	if (!path || [path length] == 0) return;
 	
-	if([book bind:path]){
-		[parent setValue:@"book" forKey:@"type"];
-		int booknum = [book subbookNum];
-		int i;
-		for(i=0; i<booknum; i++){
-			if([book selectSubbook:i]){
-				NSString* dictionaryId = [self uniqueDictionaryIdFromPath:path directory:[book directoryName]];
-				if(dictionaryId){
-					[book loadPrefFromFile:nil];
-                    [book setSecurityScopeBookmark:bookmark];
-					EBDictionary* item = [EBDictionary dictionaryListItemWithEBook:book path:path identify:dictionaryId];
-					[parent addChild:item];
-					[self addDictionary:item];
-                    
-					book = [[EBook alloc] init];
-					[book bind:path];
+	if ([DictionaryManager isEPWINGDirectory:path]) {
+		EBook* book = [[EBook alloc] init];
+		if([book bind:path]){
+			[parent setValue:@"book" forKey:@"type"];
+			int booknum = [book subbookNum];
+			int i;
+			for(i=0; i<booknum; i++){
+				if([book selectSubbook:i]){
+					NSString* dictionaryId = [self uniqueDictionaryIdFromPath:path directory:[book directoryName]];
+					if(dictionaryId){
+						[book loadPrefFromFile:nil];
+						[book setSecurityScopeBookmark:bookmark];
+						EBDictionary* item = [EBDictionary dictionaryListItemWithEBook:book path:path identify:dictionaryId];
+						[parent addChild:item];
+						[self addDictionary:item];
+						
+						book = [[EBook alloc] init];
+						[book bind:path];
+					}
 				}
 			}
+			return;
 		}
-	}else if(recursion){
+	}
+	
+	if(recursion){
 		[parent setValue:@"folder" forKey:@"type"];
         
-        NSError* error;
+        NSError* error = nil;
 		NSArray* fileList = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:path error:&error];
-		int i;
-		for(i=0; i<[fileList count]; i++){
-			NSString* new_path = [path stringByAppendingPathComponent:[fileList objectAtIndex:i]];
-			BOOL isDirectory;
+		for(int i=0; i<[fileList count]; i++){
+			NSString* fileName = [fileList objectAtIndex:i];
+			if ([fileName hasPrefix:@"."]) continue; // Skip hidden files (.DS_Store, .git, etc.)
+			
+			NSString* ext = [[fileName pathExtension] lowercaseString];
+			if ([ext isEqualToString:@"app"] || [ext isEqualToString:@"framework"] || 
+			    [ext isEqualToString:@"xcodeproj"] || [ext isEqualToString:@"photoslibrary"] ||
+			    [ext isEqualToString:@"dmg"] || [ext isEqualToString:@"zip"] || [ext isEqualToString:@"tar"] ||
+			    [ext isEqualToString:@"gz"] || [ext isEqualToString:@"pkg"] || [ext isEqualToString:@"iso"]) {
+				continue;
+			}
+			
+			NSString* new_path = [path stringByAppendingPathComponent:fileName];
+			
+			NSDictionary* attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:new_path error:nil];
+			if ([[attrs fileType] isEqualToString:NSFileTypeSymbolicLink]) continue;
+			
+			BOOL isDirectory = NO;
 			if([[NSFileManager defaultManager] fileExistsAtPath:new_path isDirectory:&isDirectory] && isDirectory){
 				DictionaryListItem* item = [DictionaryListItem dictionaryListItemWithPath:new_path];
-				[self expandDirectory:item recursion:NO bookmark:bookmark];
-				[parent addChild:item];
+				[self expandDirectory:item recursion:YES bookmark:bookmark];
+				if ([[item children] count] > 0 || [[item valueForKey:@"type"] isEqualToString:@"book"]) {
+					[parent addChild:item];
+				}
 			}
 		}
 	}
@@ -275,11 +334,11 @@ DictionaryManager* sSharedDictionaryManager = NULL;
 	if(index == NSNotFound || index > [_root count]) return NSNotFound;
 	
 	[self removeDictionaryListItem:item];
-	NSIndexSet* indices = [NSIndexSet indexSetWithIndexesInRange:NSMakeRange(index,[_root count] - index)];
-	[self willChange:NSKeyValueChangeInsertion valuesAtIndexes:indices forKey:@"root"];
+	NSIndexSet* indices = [NSIndexSet indexSetWithIndex:index];
+	[self willChange:NSKeyValueChangeRemoval valuesAtIndexes:indices forKey:@"root"];
 	// 各ディレクトリの担当辞書の更新
  	[_root removeObjectAtIndex:index];
-	[self didChange:NSKeyValueChangeInsertion valuesAtIndexes:indices forKey:@"root"];
+	[self didChange:NSKeyValueChangeRemoval valuesAtIndexes:indices forKey:@"root"];
 	return index;
 }
 

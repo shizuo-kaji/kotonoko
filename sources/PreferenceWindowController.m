@@ -29,9 +29,9 @@ enum {
 // ツールバーのアイテムを追加するユーテリティ関数
 static NSToolbarItem* addToolbarItem(NSMutableDictionary *inDict,
 									 NSString *inIdentifier,
-									 NSString *inLabel,
-									 NSString *inPaletteLabel,
-									 NSString *inToolTip,
+									 NSString *inLabelKey,
+									 NSString *inPaletteLabelKey,
+									 NSString *inToolTipKey,
 									 id 	inTarget,
 									 SEL 	inSettingSelector,
 									 id 	inItemContent,
@@ -40,13 +40,19 @@ static NSToolbarItem* addToolbarItem(NSMutableDictionary *inDict,
 {
     NSToolbarItem *item = [[NSToolbarItem alloc] initWithItemIdentifier:inIdentifier];
     
-    [item setLabel:inLabel];
-    [item setPaletteLabel:inPaletteLabel];
-    [item setToolTip:inToolTip];
+    NSString* label = [[NSBundle mainBundle] localizedStringForKey:inLabelKey value:inLabelKey table:@"PreferenceToolbar"];
+    NSString* paletteLabel = [[NSBundle mainBundle] localizedStringForKey:inPaletteLabelKey value:inPaletteLabelKey table:@"PreferenceToolbar"];
+    
+    [item setLabel:label];
+    [item setPaletteLabel:paletteLabel];
+    if (inToolTipKey) {
+        NSString* toolTip = [[NSBundle mainBundle] localizedStringForKey:inToolTipKey value:inToolTipKey table:@"PreferenceToolbar"];
+        [item setToolTip:toolTip];
+    }
     [item setTarget:inTarget];
     
     if([item respondsToSelector:inSettingSelector]){
-        objc_msgSend(item, inSettingSelector, inItemContent);
+        ((void (*)(id, SEL, id))objc_msgSend)(item, inSettingSelector, inItemContent);
     }
     [item setAction:inAction];
     
@@ -256,13 +262,20 @@ static PreferenceWindowController *sSharedInstance = nil;
 // 辞書への追加
 -(void) addDictionary:(NSString*) path
 {
-	NSMutableArray* dictionaries = [PreferenceModal prefForKey:kDirectoryPath];
-	[dictionaries addObject:path];
+    if (!path) return;
+	NSMutableArray* dictionaries = [[PreferenceModal prefForKey:kDirectoryPath] mutableCopy];
+    if (!dictionaries) dictionaries = [NSMutableArray array];
+    if (![dictionaries containsObject:path]) {
+        [dictionaries addObject:path];
+        [[PreferenceModal sharedPreference] setValue:dictionaries forKey:kDirectoryPath];
+    }
     if(IsAppSandboxed()){
         NSError *error = nil;
         NSData *bookmarkData = [[NSURL fileURLWithPath:path]
                                 bookmarkDataWithOptions:NSURLBookmarkCreationWithSecurityScope includingResourceValuesForKeys:nil relativeToURL:nil error:&error];
-        [PreferenceModal setSecurityBookmark:bookmarkData forPath:path];
+        if (bookmarkData) {
+            [PreferenceModal setSecurityBookmark:bookmarkData forPath:path];
+        }
     }
     [[DictionaryManager sharedDictionaryManager] appendDirectory:path];
 }
@@ -305,11 +318,16 @@ static PreferenceWindowController *sSharedInstance = nil;
 {
     NSEnumerator* e = [[_treeController selectedObjects] objectEnumerator];
 	DictionaryListItem* obj;
-	NSMutableArray* dictionaries = [PreferenceModal prefForKey:kDirectoryPath];
+	NSMutableArray* dictionaries = [[PreferenceModal prefForKey:kDirectoryPath] mutableCopy];
+    if (!dictionaries) dictionaries = [NSMutableArray array];
 	while (obj = [e nextObject]){
 		NSUInteger index = [[DictionaryManager sharedDictionaryManager] removeDirectory:obj];
-		[dictionaries removeObjectAtIndex:index];
+		if (index != NSNotFound && index < [dictionaries count]) {
+			[dictionaries removeObjectAtIndex:index];
+		}
 	}
+    [[PreferenceModal sharedPreference] setValue:dictionaries forKey:kDirectoryPath];
+    [[PreferenceModal sharedPreference] savePreferencesToDefaults];
 	[_treeController setSelectionIndexPath:nil]; 
 }
 

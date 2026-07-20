@@ -224,7 +224,7 @@ const NSString* kMatrixSelectionBindingIdentifier = @"selectedIndex";
 							  options:0
 							  context:[item identifier]];
         if([self respondsToSelector:[item selector]]){
-            objc_msgSend(self, [item selector], item);
+            ((void (*)(id, SEL, id))objc_msgSend)(self, [item selector], item);
         }
 	}else{
 		[super bind:binding toObject:observableObject withKeyPath:keyPath options:options];
@@ -242,7 +242,7 @@ const NSString* kMatrixSelectionBindingIdentifier = @"selectedIndex";
 {
 	ACBindingItem* item = [[self bindingItems] objectForKey:(__bridge id)(context)];
 	if(item && [self respondsToSelector:[item selector]]){
-        objc_msgSend(self, [item selector], item);
+        ((void (*)(id, SEL, id))objc_msgSend)(self, [item selector], item);
     }else{
 		[super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 	}

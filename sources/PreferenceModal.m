@@ -55,7 +55,7 @@ static NSDictionary *defaultValues()
             [NSNumber numberWithInt:kSwipeBehaviorSwitchPage], kSwipeBehavior,
             [NSNumber numberWithInt:10000], kContentsCharactersMax, 
 			[NSArray array], kDirectoryPath,
-			[NSArray array], kEBookSet,
+			[NSArray arrayWithObject:[NSMutableDictionary dictionaryWithObjectsAndKeys:@"基本セット", @"title", [NSMutableArray array], kEBookSetList, nil]], kEBookSet,
 			[NSDictionary dictionary], kDictionaryTable,
 			[NSDictionary dictionary], kAppendixTable,
 			[NSDictionary dictionary], kDictionaryIdTable,
@@ -133,6 +133,7 @@ static NSDictionary *defaultValues()
 	NSMutableDictionary* param = [table valueForKey:identifier];
 	if(!param){
 		param = [NSMutableDictionary dictionary];
+		[param setObject:[NSNumber numberWithBool:YES] forKey:@"quickTag"];
 		[table setValue:param forKey:identifier];
 	}
 	return param;

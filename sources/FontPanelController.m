@@ -259,7 +259,7 @@ NSString* const EBFontPanelDictionaryIdentifier = @"FontPanelDitionary";
 							  options:0
 							  context:[item identifier]];
         if([self respondsToSelector:[item selector]]){
-            objc_msgSend(self, [item selector], item);
+            ((void (*)(id, SEL, id))objc_msgSend)(self, [item selector], item);
         }
 	}else{
 		[super bind:binding toObject:observableObject withKeyPath:keyPath options:options];
@@ -278,7 +278,7 @@ NSString* const EBFontPanelDictionaryIdentifier = @"FontPanelDitionary";
 	if(context == (__bridge void *)(EBFontPanelDictionaryIdentifier)){
 		ACBindingItem* item = [self bindingItem];
         if([self respondsToSelector:[item selector]]){
-            objc_msgSend(self, [item selector], item);
+            ((void (*)(id, SEL, id))objc_msgSend)(self, [item selector], item);
         }
 	}else{
 		[super observeValueForKeyPath:keyPath ofObject:object change:change context:context];

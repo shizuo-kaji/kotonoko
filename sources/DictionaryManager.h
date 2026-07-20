@@ -31,6 +31,7 @@
 @property BOOL readableAll;
 
 +(DictionaryManager*) sharedDictionaryManager;
++(BOOL) isEPWINGDirectory:(NSString*)path;
 -(id) init;
 -(void) initialize;
 

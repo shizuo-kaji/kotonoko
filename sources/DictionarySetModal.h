@@ -15,6 +15,7 @@
 	NSMutableArray* _dictionarySet;
 }
 
+@property (nonatomic, strong) NSMutableDictionary* selectedDictionary;
 
 -(void) initialize;
 

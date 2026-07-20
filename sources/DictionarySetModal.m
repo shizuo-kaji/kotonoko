@@ -6,6 +6,7 @@
 
 #import "PreferenceModal.h"
 #import "DictionaryManager.h"
+#import "DictionaryListItem.h"
 #import "DictionarySetModal.h"
 
 static void* kSelectionBindingIdentifier = (void*) @"ebookSet";
@@ -66,20 +67,16 @@ static void* kDictionariesBindingIdentifier = (void*) @"dictionaries";
 
 #pragma mark Dictionary
 
+@synthesize selectedDictionary = _selectedDictionary;
+
 //-- hasDictionary
 //
 -(BOOL) hasDictionary:(NSString*) identifier
 {
-	NSArray* array = [_selectedDictionary valueForKey:kEBookSetList];
+    if (!_selectedDictionary || !identifier) return NO;
+	id array = [_selectedDictionary valueForKey:kEBookSetList];
 	if(!array || ![array isKindOfClass:[NSArray class]]){ return NO; };
-	NSEnumerator* e = [array objectEnumerator];
-	id obj;
-	while(obj = [e nextObject]){
-		if([obj isEqualToString:identifier]){
-			return YES;
-		}
-	}
-	return NO;
+	return [array containsObject:identifier];
 }
 
 
@@ -87,15 +84,22 @@ static void* kDictionariesBindingIdentifier = (void*) @"dictionaries";
 //
 -(void) addDictionary:(NSString*) identifier
 {
+    if (!_selectedDictionary || !identifier) return;
+    if (![_selectedDictionary isKindOfClass:[NSDictionary class]]) return;
 	[_selectedDictionary willChangeValueForKey:kEBookSetList];
-	NSMutableArray* array = [_selectedDictionary valueForKey:kEBookSetList];
-	if(array){
-		[array addObject:identifier];
-	}else{
-		array = [NSMutableArray arrayWithObject:identifier];
-		[_selectedDictionary setValue:array forKey:kEBookSetList];
+	id existing = [_selectedDictionary valueForKey:kEBookSetList];
+	NSMutableArray* array = nil;
+	if (existing && [existing isKindOfClass:[NSArray class]]) {
+		array = [existing mutableCopy];
+	} else {
+		array = [NSMutableArray array];
 	}
+	if (![array containsObject:identifier]) {
+		[array addObject:identifier];
+	}
+	[_selectedDictionary setValue:array forKey:kEBookSetList];
 	[_selectedDictionary didChangeValueForKey:kEBookSetList];
+    [[PreferenceModal sharedPreference] savePreferencesToDefaults];
 }
 
 
@@ -104,17 +108,17 @@ static void* kDictionariesBindingIdentifier = (void*) @"dictionaries";
 //
 -(void) removeDictionary:(NSString*) identifier
 {
+    if (!_selectedDictionary || !identifier) return;
+    if (![_selectedDictionary isKindOfClass:[NSDictionary class]]) return;
 	[_selectedDictionary willChangeValueForKey:kEBookSetList];
-	NSMutableArray* array = [_selectedDictionary valueForKey:kEBookSetList];
-	if(!array || ![array isKindOfClass:[NSArray class]]){ return; };
-	NSEnumerator* e = [array objectEnumerator];
-	id obj;
-	while(obj = [e nextObject]){
-		if([obj isEqualToString:identifier]){
-			[array removeObject:obj];
-		}
+	id existing = [_selectedDictionary valueForKey:kEBookSetList];
+	if (existing && [existing isKindOfClass:[NSArray class]]) {
+		NSMutableArray* array = [existing mutableCopy];
+		[array removeObject:identifier];
+		[_selectedDictionary setValue:array forKey:kEBookSetList];
 	}
 	[_selectedDictionary didChangeValueForKey:kEBookSetList];
+    [[PreferenceModal sharedPreference] savePreferencesToDefaults];
 }
 
 
@@ -140,10 +144,13 @@ static void* kDictionariesBindingIdentifier = (void*) @"dictionaries";
 // 選択されている辞書セットを設定する
 -(void) setSelectedDictionarySet
 {
+	[self willChangeValueForKey:@"selectedDictionary"];
 	_selectedDictionary = [[_dictionarySetController selectedObjects] lastObject];
-	if([_selectedDictionary valueForKey:@"title"] == NSNoSelectionMarker){
-		_selectedDictionary = NULL;
+	if(!_selectedDictionary || ![_selectedDictionary isKindOfClass:[NSDictionary class]] || [_selectedDictionary valueForKey:@"title"] == NSNoSelectionMarker){
+		_selectedDictionary = nil;
 	}
+	[self didChangeValueForKey:@"selectedDictionary"];
+	_dictionarySet = [[DictionaryManager sharedDictionaryManager] valueForKey:@"dictionaries"];
 	[_tableView reloadData];
 }
 
@@ -181,10 +188,22 @@ static void* kDictionariesBindingIdentifier = (void*) @"dictionaries";
 	
 	if(rowIndex >= 0 && rowIndex < [_dictionarySet count]){
 		NSString* identifier = [aTableColumn identifier];
+		id dict = [_dictionarySet objectAtIndex:rowIndex];
 		if([identifier isEqualToString:@"title"]) {
-			return [[_dictionarySet objectAtIndex:rowIndex] valueForKey:@"title"];
+			NSString* title = nil;
+			if ([dict isKindOfClass:[DictionaryListItem class]]) {
+				title = [(DictionaryListItem*)dict tagName];
+			}
+			if (!title || [title length] == 0) {
+				title = [dict valueForKey:@"title"];
+			}
+			if (!title || [title length] == 0) {
+				title = [dict valueForKey:@"id"];
+			}
+			return title ? title : @"";
 		}else if([identifier isEqualToString:@"selected"]) {
-			return [self hasDictionary:[[_dictionarySet objectAtIndex:rowIndex] valueForKey:@"id"]] ? yes : no;
+			NSString* dictId = [dict valueForKey:@"id"];
+			return (dictId && [self hasDictionary:dictId]) ? yes : no;
 		}	
 	}
 	return @"";
@@ -200,12 +219,15 @@ static void* kDictionariesBindingIdentifier = (void*) @"dictionaries";
 {
 	id identifier = [aTableColumn identifier];
     
-	if([identifier isEqualToString:@"selected"]) {
-		if([anObject boolValue] == YES){
-			[self addDictionary:[[_dictionarySet objectAtIndex:rowIndex] valueForKey:@"id"]];
-		}else{
-			[self removeDictionary:[[_dictionarySet objectAtIndex:rowIndex] valueForKey:@"id"]];
-		}	
+	if([identifier isEqualToString:@"selected"] && rowIndex >= 0 && rowIndex < [_dictionarySet count]) {
+		NSString* dictId = [[_dictionarySet objectAtIndex:rowIndex] valueForKey:@"id"];
+		if (dictId) {
+			if([anObject boolValue] == YES){
+				[self addDictionary:dictId];
+			}else{
+				[self removeDictionary:dictId];
+			}
+		}
     }
 }
 
